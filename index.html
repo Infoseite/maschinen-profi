@@ -1,1 +1,441 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maschinenprofi - Verleih & Abrechnung</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons Library -->
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .animate-spin-slow { animation: spin 3s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="root"></div>
 
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // --- Firebase Konfiguration ---
+        // Falls du Cloud-Sync nutzen möchtest, trage hier deine Daten ein.
+        const firebaseConfig = {
+            apiKey: "",
+            authDomain: "",
+            projectId: "",
+            storageBucket: "",
+            messagingSenderId: "",
+            appId: ""
+        };
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const iconRef = useRef(null);
+            useEffect(() => {
+                if (window.lucide && iconRef.current) {
+                    iconRef.current.innerHTML = '';
+                    window.lucide.createIcons({
+                        icons: { [name]: window.lucide.icons[name] },
+                        attrs: { strokeWidth: 2, width: size, height: size, class: className }
+                    });
+                }
+            }, [name, size, className]);
+            return <span ref={iconRef} className="inline-block leading-none"></span>;
+        };
+
+        function App() {
+            const [view, setView] = useState('dashboard');
+            const [data, setData] = useState(() => {
+                const local = localStorage.getItem('maschinen_profi_vFinal');
+                return local ? JSON.parse(local) : { rentals: [], customers: [], machines: [], baseHours: {} };
+            });
+
+            const [form, setForm] = useState({
+                customer: "", newCustomer: "", machine: "",
+                startDate: new Date().toISOString().split('T')[0],
+                startTime: new Date().toTimeString().slice(0, 5),
+                startReading: "", endReading: "", notes: ""
+            });
+
+            const [editId, setEditId] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [toast, setToast] = useState(null);
+            const [newCustomerName, setNewCustomerName] = useState("");
+            const [newMachineName, setNewMachineName] = useState("");
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                localStorage.setItem('maschinen_profi_vFinal', JSON.stringify(data));
+            }, [data]);
+
+            const showToast = (msg) => {
+                setToast(msg);
+                setTimeout(() => setToast(null), 3000);
+            };
+
+            const getLastReading = (machineName) => {
+                const finished = data.rentals
+                    .filter(r => r.machine === machineName && r.endReading !== "")
+                    .sort((a, b) => new Date(b.start) - new Date(a.start));
+                return finished.length > 0 ? finished[0].endReading : (data.baseHours[machineName] || "");
+            };
+
+            useEffect(() => {
+                if (!editId && view === 'new' && form.machine) {
+                    setForm(prev => ({ ...prev, startReading: getLastReading(form.machine) }));
+                }
+            }, [form.machine, view, editId]);
+
+            const handleSaveRental = () => {
+                const finalCust = form.newCustomer.trim() || form.customer;
+                if (!finalCust || !form.machine || !form.startReading) {
+                    return alert("Bitte Kunde, Maschine und Start-Zählerstand angeben.");
+                }
+
+                let hours = null;
+                if (form.startReading !== "" && form.endReading !== "") {
+                    hours = Math.round((parseFloat(form.endReading) - parseFloat(form.startReading)) * 100) / 100;
+                }
+
+                const rentalData = {
+                    id: editId || Date.now(),
+                    customer: finalCust,
+                    machine: form.machine,
+                    start: `${form.startDate}T${form.startTime}`,
+                    startReading: form.startReading,
+                    endReading: form.endReading,
+                    hours: hours,
+                    status: form.endReading !== "" ? 'abgeschlossen' : 'laufend',
+                    notes: form.notes,
+                    billed: editId ? data.rentals.find(r => r.id === editId)?.billed : false
+                };
+
+                let newRentals = editId 
+                    ? data.rentals.map(r => r.id === editId ? rentalData : r)
+                    : [rentalData, ...data.rentals];
+
+                let newCusts = [...data.customers];
+                if (form.newCustomer.trim() && !newCusts.includes(form.newCustomer.trim())) {
+                    newCusts.push(form.newCustomer.trim());
+                    newCusts.sort();
+                }
+
+                setData({ ...data, rentals: newRentals, customers: newCusts });
+                setEditId(null);
+                setForm({
+                    customer: "", newCustomer: "", machine: "",
+                    startDate: new Date().toISOString().split('T')[0],
+                    startTime: new Date().toTimeString().slice(0, 5),
+                    startReading: "", endReading: "", notes: ""
+                });
+                setView('history');
+                showToast("Eintrag erfolgreich gespeichert.");
+            };
+
+            const stats = useMemo(() => {
+                const active = data.rentals.filter(r => r.status === 'laufend').length;
+                const totalNew = data.rentals.reduce((s, r) => s + (r.hours || 0), 0);
+                const totalBase = Object.values(data.baseHours).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+                const summary = data.customers.map(c => ({
+                    name: c,
+                    hours: data.rentals
+                        .filter(r => r.customer === c && !r.billed)
+                        .reduce((s, r) => s + (r.hours || 0), 0)
+                })).sort((a,b) => b.hours - a.hours);
+                return { active, totalNew, overall: totalBase + totalNew, summary };
+            }, [data]);
+
+            const exportPDF = () => {
+                const reportWindow = window.open('', '_blank');
+                const today = new Date().toLocaleDateString('de-AT');
+                const html = `
+                    <html><head><title>Maschinenbericht</title><style>
+                    body{font-family:sans-serif;padding:40px;color:#333;} 
+                    h1{color:#1e40af;border-bottom:2px solid #1e40af;padding-bottom:10px;}
+                    table{width:100%;border-collapse:collapse;margin-top:20px;}
+                    th,td{border-bottom:1px solid #eee;padding:12px;text-align:left;} 
+                    th{background:#f8fafc;font-size:12px;text-transform:uppercase;color:#64748b;}
+                    .total{margin-top:30px;font-weight:bold;font-size:20px;color:#1e40af;}
+                    </style></head><body>
+                    <h1>Maschinen-Bericht - ${today}</h1>
+                    <h3>Offene Stunden pro Kunde</h3>
+                    <table><thead><tr><th>Kunde</th><th>Offene Stunden</th></tr></thead><tbody>
+                    ${stats.summary.map(c => `<tr><td>${c.name}</td><td>${c.hours.toFixed(1).replace('.', ',')} h</td></tr>`).join('')}
+                    </tbody></table>
+                    <div class="total">Gesamtstand aller Maschinen: ${stats.overall.toFixed(1).replace('.', ',')} h</div>
+                    <p style="font-size:10px;color:#999;margin-top:50px;">Erstellt mit Maschinenprofi</p>
+                    </body></html>
+                `;
+                reportWindow.document.write(html);
+                reportWindow.document.close();
+            };
+
+            const exportJSON = () => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `maschinen_backup_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+            };
+
+            const importJSON = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    setData(JSON.parse(event.target.result));
+                    showToast("Daten erfolgreich geladen.");
+                };
+                reader.readAsText(file);
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 pb-20 md:pb-0">
+                    <header className="sticky top-0 bg-white border-b px-4 py-3 flex justify-between items-center shadow-sm z-50">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-blue-600 p-1.5 rounded-lg text-white"><Icon name="HardHat" /></div>
+                            <h1 className="font-bold text-lg text-slate-800 tracking-tight">Maschinenprofi</h1>
+                        </div>
+                        <div className="hidden md:flex gap-1 bg-slate-100 p-1 rounded-xl">
+                            <NavTab active={view === 'dashboard'} onClick={() => setView('dashboard')} label="Dashboard" />
+                            <NavTab active={view === 'new'} onClick={() => {setView('new'); setEditId(null);}} label="Neu" />
+                            <NavTab active={view === 'history'} onClick={() => setView('history')} label="Verlauf" />
+                            <NavTab active={view === 'customers'} onClick={() => setView('customers')} label="Kunden" />
+                            <NavTab active={view === 'machines'} onClick={() => setView('machines')} label="Geräte" />
+                        </div>
+                    </header>
+
+                    <main className="max-w-4xl mx-auto p-4 md:p-8 space-y-6">
+                        {view === 'dashboard' && (
+                            <div className="space-y-6 animate-in fade-in duration-500">
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                    <StatCard title="Aktiv" value={stats.active} icon="Clock" color="text-orange-500" />
+                                    <StatCard title="Kunden" value={data.customers.length} icon="Users" color="text-blue-500" />
+                                    <StatCard title="Offen" value={stats.summary.reduce((s,c)=>s+c.hours,0).toFixed(1)} unit="h" icon="Gauge" color="text-indigo-500" />
+                                    <StatCard title="Gesamt" value={stats.overall.toFixed(1)} unit="h" icon="CheckCircle2" color="text-green-500" highlight />
+                                </div>
+
+                                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div className="p-4 bg-slate-50 border-b flex justify-between items-center font-bold text-slate-700">
+                                        <div className="flex items-center gap-2"><Icon name="BarChart3" className="text-blue-600" /> Abrechnung</div>
+                                        <button onClick={exportPDF} className="bg-white border px-3 py-1 rounded-lg text-xs flex items-center gap-1 hover:bg-slate-50 transition-colors shadow-sm font-bold text-slate-600"><Icon name="Printer" size={14}/> PDF Bericht</button>
+                                    </div>
+                                    <div className="p-4 grid gap-3">
+                                        {stats.summary.map(c => (
+                                            <div key={c.name} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group transition-all hover:border-blue-200">
+                                                <span className="font-bold text-slate-700">{c.name}</span>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="font-black text-blue-600 tabular-nums">{c.hours.toFixed(1).replace('.', ',')} h</span>
+                                                    {c.hours > 0 && (
+                                                        <button 
+                                                            onClick={() => {
+                                                                const newR = data.rentals.map(r => r.customer === c.name ? {...r, billed: true} : r);
+                                                                setData({...data, rentals: newR});
+                                                                showToast("Abgerechnet.");
+                                                            }}
+                                                            className="bg-green-500 text-white p-1 rounded-lg hover:bg-green-600 transition-colors shadow-sm"
+                                                            title="Abrechnen"
+                                                        ><Icon name="CheckCircle" size={16} /></button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="bg-indigo-600 text-white p-6 rounded-2xl shadow-lg flex flex-col md:flex-row items-center justify-between gap-4">
+                                    <div className="flex items-center gap-4 text-center md:text-left">
+                                        <div className="bg-white/20 p-3 rounded-xl"><Icon name="Database" size={24} /></div>
+                                        <div><h3 className="font-bold">Daten-Sicherung</h3><p className="text-xs text-indigo-100 opacity-90">Sichere deine Stände als Datei für andere Geräte.</p></div>
+                                    </div>
+                                    <div className="flex gap-2 w-full md:w-auto">
+                                        <button onClick={exportJSON} className="flex-1 md:flex-none bg-white text-indigo-600 px-6 py-2.5 rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all">Sichern</button>
+                                        <button onClick={() => fileInputRef.current.click()} className="flex-1 md:flex-none bg-indigo-500 text-white border border-indigo-400 px-6 py-2.5 rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all">Laden</button>
+                                        <input type="file" ref={fileInputRef} onChange={importJSON} className="hidden" accept=".json" />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'new' && (
+                            <div className="bg-white p-6 md:p-8 rounded-2xl border border-slate-200 shadow-xl space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                                <h2 className="text-xl font-bold border-b border-slate-100 pb-4 text-slate-800 flex items-center gap-2"><Icon name="PlusCircle" className="text-blue-600"/> {editId ? "Eintrag bearbeiten" : "Neuer Verleih"}</h2>
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Kunde</label>
+                                            <select className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={form.customer} onChange={e => setForm({...form, customer: e.target.value, newCustomer: ""})}>
+                                                <option value="">-- Bestandskunde --</option>
+                                                {data.customers.map(c => <option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                            <input className="w-full mt-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Oder neuen Namen eingeben..." value={form.newCustomer} onChange={e => setForm({...form, newCustomer: e.target.value, customer: ""})} />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Maschine</label>
+                                            <select className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={form.machine} onChange={e => setForm({...form, machine: e.target.value})}>
+                                                <option value="">-- Gerät wählen --</option>
+                                                {data.machines.map(m => <option key={m} value={m}>{m}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Start-Zählerstand</label>
+                                            <div className="relative">
+                                                <Icon name="Gauge" className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-500" />
+                                                <input type="number" className="w-full bg-blue-50 border border-blue-100 rounded-xl pl-12 pr-4 py-3 font-bold text-blue-700 outline-none" value={form.startReading} onChange={e => setForm({...form, startReading: e.target.value})} />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">End-Zählerstand (bei Rückgabe)</label>
+                                            <div className="relative">
+                                                <Icon name="CheckCircle2" className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500" />
+                                                <input type="number" className="w-full bg-emerald-50 border border-emerald-100 rounded-xl pl-12 pr-4 py-3 font-bold text-emerald-700 outline-none" value={form.endReading} onChange={e => setForm({...form, endReading: e.target.value})} placeholder="..." />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <textarea className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 min-h-[80px] outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Weitere Notizen..." value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
+                                <div className="flex gap-3 pt-4">
+                                    <button onClick={handleSaveRental} className="flex-1 bg-blue-600 text-white py-4 rounded-xl font-bold shadow-lg hover:bg-blue-700 active:scale-95 transition-all text-lg">Eintrag speichern</button>
+                                    <button onClick={() => {setView('dashboard'); setEditId(null);}} className="bg-slate-100 text-slate-600 py-4 px-8 rounded-xl font-bold hover:bg-slate-200 transition-all">Abbruch</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'history' && (
+                            <div className="space-y-4 animate-in fade-in duration-500">
+                                <div className="relative">
+                                    <Icon name="Search" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input className="w-full bg-white border border-slate-200 rounded-2xl pl-12 pr-4 py-4 shadow-sm outline-none focus:ring-2 focus:ring-blue-500 transition-all" placeholder="Nach Kunde oder Maschine suchen..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                                </div>
+                                <div className="space-y-3">
+                                    {data.rentals.filter(r => r.customer.toLowerCase().includes(searchTerm.toLowerCase()) || r.machine.toLowerCase().includes(searchTerm.toLowerCase())).map(r => (
+                                        <div key={r.id} className={`bg-white p-4 rounded-2xl border ${r.billed ? 'border-green-100 opacity-60' : 'border-slate-200'} shadow-sm flex items-center justify-between group transition-all hover:border-blue-300`}>
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="font-bold text-slate-800">{r.customer}</span>
+                                                    {r.billed && <span className="text-[8px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">Abgerechnet</span>}
+                                                </div>
+                                                <div className="text-xs text-slate-500 font-medium">{r.machine} • {new Date(r.start).toLocaleDateString('de-AT')} • {r.startReading} → {r.endReading || '...'}</div>
+                                            </div>
+                                            <div className="flex items-center gap-4">
+                                                <div className="text-right border-l pl-4 border-slate-100 min-w-[70px]">
+                                                    <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Stunden</div>
+                                                    <div className="font-black text-lg text-blue-600 tabular-nums">{r.hours ? r.hours.toFixed(1).replace('.', ',') + ' h' : '...'}</div>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => {
+                                                        const [d, t] = r.start.split('T');
+                                                        setForm({ customer: r.customer, newCustomer: "", machine: r.machine, startDate: d, startTime: t, startReading: r.startReading, endReading: r.endReading || "", notes: r.notes || "" });
+                                                        setEditId(r.id); setView('new');
+                                                    }} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"><Icon name="Edit3" size={18}/></button>
+                                                    <button onClick={() => { if(confirm("Eintrag unwiderruflich löschen?")) setData({...data, rentals: data.rentals.filter(x => x.id !== r.id)}); }} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"><Icon name="Trash2" size={18}/></button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'customers' && (
+                            <div className="space-y-4 animate-in fade-in duration-500">
+                                <div className="bg-white p-6 rounded-2xl border border-blue-200 shadow-lg flex gap-3">
+                                    <input className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none font-medium" placeholder="Neuer Kundenname..." value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} />
+                                    <button onClick={() => { if(!newCustomerName.trim())return; setData({...data, customers: [...data.customers, newCustomerName.trim()].sort()}); setNewCustomerName(""); showToast("Kunde angelegt."); }} className="bg-blue-600 text-white px-8 rounded-xl font-bold hover:bg-blue-700 transition-all">Neu</button>
+                                </div>
+                                <div className="grid md:grid-cols-2 gap-3">
+                                    {data.customers.map(c => (
+                                        <div key={c} className="bg-white p-4 rounded-xl border border-slate-200 flex justify-between items-center group hover:border-blue-300 transition-all">
+                                            <span className="font-bold text-slate-700">{c}</span>
+                                            <button onClick={() => {if(confirm("Kunde löschen?")) setData({...data, customers: data.customers.filter(x => x !== c)});}} className="text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Icon name="Trash2" size={16} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {view === 'machines' && (
+                            <div className="space-y-4 animate-in fade-in duration-500">
+                                <div className="bg-white p-6 rounded-2xl border border-indigo-200 shadow-lg flex gap-3">
+                                    <input className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 outline-none font-medium" placeholder="Gerät (z.B. Bagger CAT)..." value={newMachineName} onChange={e => setNewMachineName(e.target.value)} />
+                                    <button onClick={() => { if(!newMachineName.trim())return; setData({...data, machines: [...data.machines, newMachineName.trim()].sort()}); setNewMachineName(""); showToast("Maschine angelegt."); }} className="bg-indigo-600 text-white px-8 rounded-xl font-bold hover:bg-indigo-700 transition-all">Neu</button>
+                                </div>
+                                <div className="grid md:grid-cols-2 gap-4">
+                                    {data.machines.map(m => {
+                                        const lastVal = getLastReading(m);
+                                        return (
+                                            <div key={m} className="bg-white p-5 rounded-2xl border border-slate-200 flex items-center justify-between group hover:border-indigo-300 transition-all">
+                                                <div>
+                                                    <div className="font-bold text-lg text-slate-800">{m}</div>
+                                                    <div className="flex items-center gap-2 mt-3 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Basis:</label>
+                                                        <input type="number" className="w-24 bg-transparent border-none text-right font-black text-blue-600 outline-none tabular-nums" value={data.baseHours[m] || 0} onChange={e => {
+                                                            const newB = {...data.baseHours, [m]: e.target.value};
+                                                            setData({...data, baseHours: newB});
+                                                        }} />
+                                                        <span className="text-[10px] font-bold text-slate-400">h</span>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => {if(confirm("Gerät löschen?")) setData({...data, machines: data.machines.filter(x => x !== m)});}} className="text-slate-100 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Icon name="Trash2" size={20} /></button>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around items-center h-16 md:hidden shadow-[0_-4px_12px_rgba(0,0,0,0.05)] z-50">
+                        <MobileNavItem active={view === 'dashboard'} onClick={() => setView('dashboard')} icon="LayoutDashboard" label="Status" />
+                        <MobileNavItem active={view === 'new'} onClick={() => {setView('new'); setEditId(null);}} icon="PlusCircle" label="Neu" />
+                        <MobileNavItem active={view === 'history'} onClick={() => setView('history')} icon="History" label="Verlauf" />
+                        <MobileNavItem active={view === 'customers'} onClick={() => setView('customers')} icon="Users" label="Kunden" />
+                        <MobileNavItem active={view === 'machines'} onClick={() => setView('machines')} icon="Construction" label="Geräte" />
+                    </nav>
+
+                    {toast && (
+                        <div className="fixed bottom-20 right-4 p-4 rounded-xl bg-slate-900 text-white text-sm font-bold shadow-2xl animate-in slide-in-from-right z-[100] border border-white/10 flex items-center gap-2">
+                            <Icon name="CheckCircle2" size={16} className="text-green-400" /> {toast}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        function NavTab({ active, onClick, label }) {
+            return <button onClick={onClick} className={`px-4 py-2 rounded-lg font-bold text-sm transition-all ${active ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:bg-slate-100'}`}>{label}</button>;
+        }
+
+        function StatCard({ title, value, unit, icon, color, highlight }) {
+            return (
+                <div className={`bg-white p-4 rounded-2xl border ${highlight ? 'border-blue-500 bg-blue-50/20 ring-4 ring-blue-50' : 'border-slate-200'} text-center shadow-sm transition-all hover:shadow-md`}>
+                    <Icon name={icon} className={`${color} mx-auto mb-2`} />
+                    <div className="text-xl font-black text-slate-800 tabular-nums">{value}{unit && <span className="text-[10px] ml-0.5 text-slate-400">{unit}</span>}</div>
+                    <div className="text-[9px] uppercase font-bold text-slate-400 tracking-widest mt-1">{title}</div>
+                </div>
+            );
+        }
+
+        function MobileNavItem({ active, onClick, icon, label }) {
+            return (
+                <button onClick={onClick} className={`flex flex-col items-center flex-1 h-full justify-center relative transition-all ${active ? 'text-blue-600' : 'text-slate-400'}`}>
+                    <Icon name={icon} size={20} />
+                    <span className="text-[9px] font-bold uppercase mt-1 tracking-tighter">{label}</span>
+                    {active && <div className="absolute bottom-0 w-8 h-1 bg-blue-600 rounded-t-full shadow-[0_-2px_4px_rgba(37,99,235,0.4)]" />}
+                </button>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
