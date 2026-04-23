@@ -13,21 +13,20 @@ import {
   addDoc, 
   updateDoc, 
   deleteDoc, 
-  onSnapshot, 
-  query 
+  onSnapshot 
 } from 'firebase/firestore';
 import { 
   BarChart3, 
   PlusCircle, 
   History as HistoryIcon, 
-  Settings, 
   CheckCircle2, 
   Trash2,
   Construction,
   Clock,
   ArrowRightCircle,
   X,
-  Users
+  Users,
+  Tractor
 } from 'lucide-react';
 
 // --- Firebase Konfiguration ---
@@ -60,7 +59,7 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Auth Error, falling back to anonymous:", err);
+        console.error("Auth Error:", err);
         await signInAnonymously(auth);
       }
     };
@@ -130,16 +129,17 @@ export default function App() {
         {view === 'dashboard' && <Dashboard stats={stats} rentals={rentals} />}
         {view === 'new' && <EntryForm machines={machines} customers={customers} rentals={rentals} setView={setView} />}
         {view === 'history' && <History rentals={rentals} />}
-        {view === 'settings' && <SettingsView machines={machines} customers={customers} />}
+        {view === 'customers' && <KundenView customers={customers} />}
+        {view === 'machines' && <GeraeteView machines={machines} />}
       </main>
 
-      {/* Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-slate-950 text-white h-24 flex items-center justify-around border-t border-slate-800 px-4 shadow-[0_-10px_25px_rgba(0,0,0,0.3)] z-50">
-        <NavButton active={view === 'dashboard'} icon={<BarChart3 size={22} />} label="Stats" onClick={() => setView('dashboard')} />
-        <NavButton active={view === 'history'} icon={<HistoryIcon size={22} />} label="Verlauf" onClick={() => setView('history')} />
-        <NavButton active={view === 'new'} icon={<PlusCircle size={32} />} label="NEU" onClick={() => setView('new')} primary />
-        <NavButton active={false} icon={<Users size={22} />} label="Kunden" onClick={() => setView('settings')} />
-        <NavButton active={view === 'settings'} icon={<Settings size={22} />} label="Setup" onClick={() => setView('settings')} />
+      {/* Navigation - Exakt wie im Screenshot */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-slate-950 text-white h-24 flex items-center border-t border-slate-800 shadow-[0_-10px_25px_rgba(0,0,0,0.3)] z-50">
+        <NavButton active={view === 'new'} icon={<PlusCircle size={24} />} label="NEU" onClick={() => setView('new')} primary />
+        <NavButton active={view === 'dashboard'} icon={<BarChart3 size={20} />} label="ST" onClick={() => setView('dashboard')} />
+        <NavButton active={view === 'history'} icon={<HistoryIcon size={20} />} label="V" onClick={() => setView('history')} />
+        <NavButton active={view === 'customers'} icon={<Users size={20} />} label="K" onClick={() => setView('customers')} />
+        <NavButton active={view === 'machines'} icon={<Tractor size={20} />} label="G" onClick={() => setView('machines')} />
       </nav>
     </div>
   );
@@ -153,7 +153,7 @@ function Dashboard({ stats, rentals }) {
 
   const finishRental = async (id, start) => {
     if (!endVal || Number(endVal) <= start) {
-        alert("Ungültiger Endstand!");
+        alert("Endstand muss höher als Startstand sein!");
         return;
     }
     await updateDoc(getDocRef('rentals', id), { endReading: Number(endVal) });
@@ -275,7 +275,7 @@ function EntryForm({ machines, customers, rentals, setView }) {
   const save = async () => {
     const cust = form.newCustomer.trim() || form.customer;
     if (!cust || !form.machine || form.startReading === '') {
-        alert("Fehlende Daten!");
+        alert("Bitte alle Pflichtfelder ausfüllen!");
         return;
     }
     
@@ -299,16 +299,16 @@ function EntryForm({ machines, customers, rentals, setView }) {
       <div className="space-y-4">
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Kunde</label>
-          <select className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-1" value={form.customer} onChange={e => setForm({...form, customer: e.target.value, newCustomer: ''})}>
+          <select className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-1 outline-none" value={form.customer} onChange={e => setForm({...form, customer: e.target.value, newCustomer: ''})}>
             <option value="">Wählen...</option>
             {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
-          <input className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-2" placeholder="Oder neuer Name..." value={form.newCustomer} onChange={e => setForm({...form, newCustomer: e.target.value, customer: ''})} />
+          <input className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-2 outline-none" placeholder="Oder neuer Name..." value={form.newCustomer} onChange={e => setForm({...form, newCustomer: e.target.value, customer: ''})} />
         </div>
 
         <div>
           <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Maschine</label>
-          <select className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-1" value={form.machine} onChange={e => setForm({...form, machine: e.target.value})}>
+          <select className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-1 outline-none" value={form.machine} onChange={e => setForm({...form, machine: e.target.value})}>
             <option value="">Wählen...</option>
             {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
           </select>
@@ -335,9 +335,7 @@ function EntryForm({ machines, customers, rentals, setView }) {
 
 function History({ rentals }) {
   const deleteRental = async (id) => {
-    if(confirm("Eintrag wirklich löschen?")) {
-      await deleteDoc(getDocRef('rentals', id));
-    }
+    await deleteDoc(getDocRef('rentals', id));
   };
 
   return (
@@ -364,7 +362,29 @@ function History({ rentals }) {
   );
 }
 
-function SettingsView({ machines, customers }) {
+function KundenView({ customers }) {
+  const del = async (id) => {
+    await deleteDoc(getDocRef('customers', id));
+  };
+
+  return (
+    <div className="space-y-4">
+      <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest px-2">Kundenliste</h2>
+      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
+        <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+          {customers.length === 0 ? <p className="text-center text-slate-300 py-4 font-bold">Keine Kunden gespeichert.</p> : customers.map(c => (
+            <div key={c.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl text-sm font-bold">
+              <span>{c.name}</span>
+              <button onClick={() => del(c.id)} className="text-rose-400"><Trash2 size={16} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeraeteView({ machines }) {
   const [mInput, setMInput] = useState({ name: '', base: '' });
 
   const addM = async () => {
@@ -373,36 +393,24 @@ function SettingsView({ machines, customers }) {
     setMInput({ name: '', base: '' });
   };
 
-  const del = async (coll, id) => {
-    if(confirm("Löschen?")) await deleteDoc(getDocRef(coll, id));
+  const del = async (id) => {
+    await deleteDoc(getDocRef('machines', id));
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest px-2">Geräte verwalten</h2>
       <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
-        <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest mb-4">Geräte-Setup</h2>
         <div className="flex gap-2 mb-4">
           <input className="flex-1 bg-slate-50 p-3 rounded-xl border border-slate-100 font-bold text-sm outline-none" placeholder="Name" value={mInput.name} onChange={e => setMInput({...mInput, name: e.target.value})} />
           <input type="number" className="w-20 bg-slate-50 p-3 rounded-xl border border-slate-100 font-bold text-sm outline-none" placeholder="h" value={mInput.base} onChange={e => setMInput({...mInput, base: e.target.value})} />
           <button onClick={addM} className="bg-slate-950 text-amber-500 p-3 rounded-xl font-bold">+</button>
         </div>
-        <div className="space-y-2 max-h-40 overflow-y-auto">
+        <div className="space-y-2 max-h-[50vh] overflow-y-auto">
           {machines.map(m => (
-            <div key={m.id} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl text-sm font-bold">
+            <div key={m.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl text-sm font-bold">
               <span>{m.name} <span className="text-slate-400 text-[10px]">({m.base}h)</span></span>
-              <button onClick={() => del('machines', m.id)} className="text-rose-400"><Trash2 size={14} /></button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
-        <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest mb-4">Kunden</h2>
-        <div className="space-y-2 max-h-40 overflow-y-auto">
-          {customers.map(c => (
-            <div key={c.id} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl text-sm font-bold">
-              <span>{c.name}</span>
-              <button onClick={() => del('customers', c.id)} className="text-rose-400"><Trash2 size={14} /></button>
+              <button onClick={() => del(m.id)} className="text-rose-400"><Trash2 size={16} /></button>
             </div>
           ))}
         </div>
@@ -415,10 +423,10 @@ function NavButton({ icon, label, onClick, active, primary }) {
   return (
     <button 
       onClick={onClick} 
-      className={`flex flex-col items-center justify-center gap-1 transition-all ${active ? 'text-amber-500' : 'text-slate-500'} ${primary ? 'bg-amber-500 !text-slate-950 w-20 h-20 -mt-12 rounded-full border-[8px] border-slate-100 shadow-2xl scale-110 active:scale-95' : 'flex-1'}`}
+      className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${active ? 'text-amber-500' : 'text-slate-500'} ${primary ? 'bg-amber-500 !text-slate-950 h-full border-x border-slate-800' : ''}`}
     >
-      <span className={primary ? 'mb-0' : ''}>{icon}</span>
-      {!primary && <span className="text-[9px] font-black uppercase tracking-widest">{label}</span>}
+      <span className={primary ? 'scale-125' : ''}>{icon}</span>
+      <span className="text-[10px] font-black uppercase tracking-widest leading-none mt-1">{label}</span>
     </button>
   );
 }
