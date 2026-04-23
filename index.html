@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Maschinenprofi STMK</title>
     
-    <!-- Tailwind CSS für das Design -->
+    <!-- Frameworks -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Firebase Compat Bibliotheken (Diese funktionieren am besten in einer einzelnen Datei) -->
+    <!-- Firebase Compat Bibliotheken (Stabil für Single-Files) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -21,24 +21,34 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
-        .active-tab { color: #f59e0b; }
-        .nav-shadow { shadow-[0_-10px_25px_rgba(0,0,0,0.3)]; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-900 overflow-x-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
+        // =========================================================================
+        // WICHTIG: TRAGE HIER DEINE DATEN AUS DER FIREBASE-KONSOLE EIN!
+        // (Du findest diese unter: Projekt-Einstellungen -> Web-App-Konfiguration)
+        // =========================================================================
+        const MANUELLE_CONFIG = {
+            apiKey: "HIER_API_KEY_EINTRAGEN",
+            authDomain: "DEIN_PROJEKT.firebaseapp.com",
+            projectId: "DEINE_PROJEKT_ID",
+            storageBucket: "DEIN_PROJEKT.appspot.com",
+            messagingSenderId: "DEINE_ID",
+            appId: "DEINE_APP_ID"
+        };
+        // =========================================================================
+
         const { useState, useEffect, useMemo } = React;
 
-        // Icons als einfache SVGs (Damit keine externen Ladefehler entstehen)
+        // Icons
         const IconPlus = () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>;
         const IconStats = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>;
         const IconHistory = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>;
         const IconUsers = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>;
         const IconTractor = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 11 2-2-2-2"/><path d="M11 11V7"/><path d="M15 11v-4"/><path d="M19 11v-4"/><rect x="2" y="15" width="20" height="4" rx="1"/></svg>;
-        const IconCheck = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
-        const IconTrash = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
 
         function App() {
             const [view, setView] = useState('dashboard');
@@ -46,55 +56,86 @@
             const [customers, setCustomers] = useState([]);
             const [machines, setMachines] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
             const [user, setUser] = useState(null);
 
-            // Firebase Initialisierung
+            // 1. Initialisierung und Authentifizierung (Regel 3)
             useEffect(() => {
-                const firebaseConfig = JSON.parse(__firebase_config);
-                if (!firebase.apps.length) {
-                    firebase.initializeApp(firebaseConfig);
-                }
-                
-                const db = firebase.firestore();
-                const auth = firebase.auth();
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
+                const initAuth = async () => {
+                    try {
+                        let config;
+                        try {
+                            config = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : MANUELLE_CONFIG;
+                        } catch(e) {
+                            config = MANUELLE_CONFIG;
+                        }
 
-                // Authentifizierung
-                const login = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await auth.signInWithCustomToken(__initial_auth_token);
-                    } else {
-                        await auth.signInAnonymously();
+                        if (config.apiKey === "HIER_API_KEY_EINTRAGEN" && typeof __firebase_config === 'undefined') {
+                            setError("Firebase-Daten fehlen. Bitte trage deine Daten im Code ein.");
+                            setLoading(false);
+                            return;
+                        }
+
+                        if (!firebase.apps.length) firebase.initializeApp(config);
+                        
+                        const auth = firebase.auth();
+                        
+                        // Zuerst anmelden und await verwenden
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await auth.signInWithCustomToken(__initial_auth_token);
+                        } else {
+                            await auth.signInAnonymously();
+                        }
+
+                        // Auth-Status Listener setzen
+                        const unsubscribe = auth.onAuthStateChanged((u) => {
+                            setUser(u);
+                        });
+
+                        return () => unsubscribe();
+                    } catch (e) {
+                        setError("Startfehler bei der Anmeldung: " + e.message);
+                        setLoading(false);
                     }
                 };
 
-                login();
-
-                auth.onAuthStateChanged((u) => {
-                    if (u) {
-                        setUser(u);
-                        
-                        // Echtzeit-Daten-Sync (Regel 1 & 2)
-                        const publicData = db.collection('artifacts').doc(appId).collection('public').doc('data');
-                        
-                        const unsubRentals = publicData.collection('rentals').onSnapshot(snap => {
-                            const data = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
-                            setRentals(data.sort((a,b) => new Date(b.date) - new Date(a.date)));
-                            setLoading(false);
-                        });
-
-                        const unsubCustomers = publicData.collection('customers').onSnapshot(snap => {
-                            setCustomers(snap.docs.map(doc => ({id: doc.id, ...doc.data()})));
-                        });
-
-                        const unsubMachines = publicData.collection('machines').onSnapshot(snap => {
-                            setMachines(snap.docs.map(doc => ({id: doc.id, ...doc.data()})));
-                        });
-
-                        return () => { unsubRentals(); unsubCustomers(); unsubMachines(); };
-                    }
-                });
+                initAuth();
             }, []);
+
+            // 2. Daten laden erst NACH erfolgreicher Anmeldung (Regel 3)
+            useEffect(() => {
+                if (!user) return;
+
+                const db = firebase.firestore();
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
+                
+                // Pfad für öffentliche Daten (Regel 1)
+                const rootRef = db.collection('artifacts').doc(appId).collection('public').doc('data');
+
+                // Daten-Abonnement (Regel 2: Keine komplexen Queries)
+                const unsubRentals = rootRef.collection('rentals').onSnapshot(snap => {
+                    const data = snap.docs.map(doc => ({id: doc.id, ...doc.data()}));
+                    setRentals(data.sort((a,b) => new Date(b.date) - new Date(a.date)));
+                    setLoading(false);
+                }, err => {
+                    console.error("Firestore Fehler (Rentals):", err);
+                    setError("Zugriff verweigert oder Datenbankfehler.");
+                });
+
+                const unsubCustomers = rootRef.collection('customers').onSnapshot(snap => {
+                    setCustomers(snap.docs.map(doc => ({id: doc.id, ...doc.data()})));
+                }, err => console.error("Firestore Fehler (Customers):", err));
+
+                const unsubMachines = rootRef.collection('machines').onSnapshot(snap => {
+                    setMachines(snap.docs.map(doc => ({id: doc.id, ...doc.data()})));
+                }, err => console.error("Firestore Fehler (Machines):", err));
+
+                return () => {
+                    unsubRentals();
+                    unsubCustomers();
+                    unsubMachines();
+                };
+            }, [user]);
 
             const stats = useMemo(() => {
                 const active = rentals.filter(r => !r.endReading);
@@ -103,10 +144,25 @@
                 return { active, billedFällig, openHours };
             }, [rentals]);
 
-            if (loading) return (
+            if (error) return (
+                <div className="h-screen flex items-center justify-center bg-slate-900 p-6">
+                    <div className="bg-rose-500 text-white p-6 rounded-3xl shadow-2xl text-center">
+                        <div className="font-black mb-2 uppercase tracking-widest">Achtung</div>
+                        <div className="text-sm font-bold">{error}</div>
+                        <button 
+                            onClick={() => window.location.reload()}
+                            className="mt-4 bg-white text-rose-500 px-4 py-2 rounded-xl font-bold uppercase text-xs"
+                        >
+                            Neu laden
+                        </button>
+                    </div>
+                </div>
+            );
+
+            if (!user || (loading && rentals.length === 0)) return (
                 <div className="h-screen flex flex-col items-center justify-center bg-slate-950 text-amber-500">
                     <div className="animate-bounce text-4xl mb-4">🚜</div>
-                    <p className="font-black italic uppercase tracking-widest text-sm">Maschinenprofi lädt...</p>
+                    <p className="font-black italic uppercase tracking-widest text-sm">Verbinde mit Cloud...</p>
                 </div>
             );
 
@@ -117,10 +173,6 @@
                             <div>
                                 <h1 className="text-2xl font-black italic text-amber-500 tracking-tighter leading-none mb-1">MASCHINENPROFI</h1>
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">Live Cloud-System</p>
-                            </div>
-                            <div className="flex items-center gap-2 pb-1">
-                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                                <span className="text-[10px] font-black uppercase text-slate-400">Online</span>
                             </div>
                         </div>
                     </header>
@@ -144,58 +196,65 @@
             );
         }
 
-        // --- Dashboard ---
+        // --- Komponenten ---
+
         function Dashboard({ stats, rentals }) {
             const [editId, setEditId] = useState(null);
             const [val, setVal] = useState('');
 
             const finish = async (id, start) => {
                 if (!val || Number(val) <= start) return alert("Endstand muss höher sein!");
-                const db = firebase.firestore();
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
-                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('rentals').doc(id).update({ endReading: Number(val) });
+                await firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data').collection('rentals').doc(id).update({ endReading: Number(val) });
                 setEditId(null); setVal('');
             };
 
             const markBilled = async (id) => {
-                const db = firebase.firestore();
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
-                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('rentals').doc(id).update({ billed: true });
+                await firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data').collection('rentals').doc(id).update({ billed: true });
             };
 
             return (
-                <div className="space-y-6 animate-in fade-in duration-500">
+                <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white p-5 rounded-[2rem] shadow-sm"><span className="text-[10px] font-black text-slate-400 uppercase">Aktiv</span><div className="text-3xl font-black text-amber-500">{stats.active.length}</div></div>
-                        <div className="bg-white p-5 rounded-[2rem] shadow-sm"><span className="text-[10px] font-black text-slate-400 uppercase">Offen (h)</span><div className="text-3xl font-black text-emerald-500">{stats.openHours.toFixed(1)}</div></div>
+                        <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-200">
+                            <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">Aktiv</span>
+                            <div className="text-3xl font-black text-amber-500">{stats.active.length}</div>
+                        </div>
+                        <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-200">
+                            <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">Offen (h)</span>
+                            <div className="text-3xl font-black text-emerald-500">{stats.openHours.toFixed(1)}</div>
+                        </div>
                     </div>
 
                     {stats.active.map(r => (
-                        <div key={r.id} className="bg-amber-50 p-5 rounded-[2rem] border-2 border-amber-200 shadow-sm">
+                        <div key={r.id} className="bg-amber-50 p-5 rounded-[2rem] border-2 border-amber-200 shadow-sm animate-pulse-slow">
                             <div className="flex justify-between font-black uppercase mb-1 text-lg"><span>{r.customer}</span><span>{r.startReading}h</span></div>
-                            <div className="text-[10px] font-bold text-amber-700 uppercase mb-4 tracking-widest">{r.machine}</div>
+                            <div className="text-[10px] font-bold text-amber-700 uppercase mb-4">{r.machine}</div>
                             {editId === r.id ? (
-                                <div className="flex gap-2"><input type="number" className="flex-1 p-3 rounded-xl font-bold" value={val} onChange={e=>setVal(e.target.value)} placeholder="Endstand" /><button onClick={()=>finish(r.id, r.startReading)} className="bg-slate-900 text-white p-3 rounded-xl"><IconCheck /></button></div>
+                                <div className="flex gap-2">
+                                    <input type="number" className="flex-1 p-3 rounded-xl font-bold outline-none" value={val} onChange={e=>setVal(e.target.value)} placeholder="Endstand" />
+                                    <button onClick={()=>finish(r.id, r.startReading)} className="bg-slate-900 text-white p-3 rounded-xl font-bold">OK</button>
+                                </div>
                             ) : (
-                                <button onClick={()=>setEditId(r.id)} className="w-full bg-amber-500 text-white font-black py-3 rounded-2xl shadow-lg active:scale-95 transition-transform">BEENDEN</button>
+                                <button onClick={()=>setEditId(r.id)} className="w-full bg-amber-500 text-white font-black py-3 rounded-2xl shadow-lg active:scale-95 transition-transform">EINSATZ BEENDEN</button>
                             )}
                         </div>
                     ))}
 
-                    <section className="bg-white p-6 rounded-[2.5rem] shadow-sm">
-                        <h2 className="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest">Abrechnung fällig</h2>
-                        {stats.billedFällig.length === 0 ? <p className="text-center text-slate-300 py-4 font-bold">KEINE OFFENEN POSTEN</p> : stats.billedFällig.map(r => (
+                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
+                        <h2 className="text-[10px] font-black uppercase text-slate-400 mb-4 tracking-widest text-center">Abrechnung fällig</h2>
+                        {stats.billedFällig.length === 0 ? <p className="text-center text-slate-300 py-4 font-bold text-sm">KEINE OFFENEN POSTEN</p> : stats.billedFällig.map(r => (
                             <div key={r.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-2xl mb-2 border border-slate-100">
-                                <div className="font-bold text-sm leading-none"><div>{r.customer}</div><div className="text-[10px] text-slate-400 mt-1 uppercase">{r.machine}</div></div>
-                                <div className="flex items-center gap-3 ml-2"><span className="font-black text-emerald-600">{(r.endReading-r.startReading).toFixed(1)}h</span><button onClick={()=>markBilled(r.id)} className="bg-emerald-500 text-white p-2 rounded-xl shadow-md"><IconCheck /></button></div>
+                                <div className="font-bold text-xs truncate max-w-[120px]"><div>{r.customer}</div><div className="text-[8px] text-slate-400 mt-1 uppercase">{r.machine}</div></div>
+                                <div className="flex items-center gap-3"><span className="font-black text-emerald-600">{(r.endReading-r.startReading).toFixed(1)}h</span><button onClick={()=>markBilled(r.id)} className="bg-emerald-500 text-white p-2 rounded-xl text-xs font-bold shadow-md">✓</button></div>
                             </div>
                         ))}
-                    </section>
+                    </div>
                 </div>
             );
         }
 
-        // --- Neuaufnahme ---
         function EntryForm({ machines, customers, rentals, setView }) {
             const [f, setF] = useState({c: '', nc: '', m: '', s: '', d: new Date().toISOString().split('T')[0]});
 
@@ -209,12 +268,11 @@
             const save = async () => {
                 const cust = f.nc.trim() || f.c;
                 if (!cust || !f.m || f.s === '') return alert("Pflichtfelder fehlen!");
-                const db = firebase.firestore();
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
-                const publicData = db.collection('artifacts').doc(appId).collection('public').doc('data');
+                const root = firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data');
                 
-                await publicData.collection('rentals').add({ customer: cust, machine: f.m, startReading: Number(f.s), endReading: null, date: f.d, billed: false });
-                if (f.nc.trim() && !customers.some(c=>c.name===cust)) await publicData.collection('customers').add({ name: cust });
+                await root.collection('rentals').add({ customer: cust, machine: f.m, startReading: Number(f.s), endReading: null, date: f.d, billed: false });
+                if (f.nc.trim() && !customers.some(c=>c.name===cust)) await root.collection('customers').add({ name: cust });
                 setView('dashboard');
             };
 
@@ -229,30 +287,28 @@
                         <option value="">Gerät wählen...</option>{machines.map(m=><option key={m.id} value={m.name}>{m.name}</option>)}
                     </select>
                     <div className="text-center"><label className="text-[10px] font-black uppercase text-slate-400">Start (h)</label><input type="number" className="w-full bg-slate-100 p-4 rounded-2xl font-black text-2xl text-amber-600 text-center outline-none" value={f.s} onChange={e=>setF({...f, s:e.target.value})} /></div>
-                    <button onClick={save} className="w-full bg-slate-950 text-white py-5 rounded-3xl font-black italic tracking-widest shadow-2xl active:scale-95 transition-transform">SPEICHERN</button>
+                    <button onClick={save} className="w-full bg-slate-950 text-white py-5 rounded-3xl font-black italic shadow-2xl active:scale-95 transition-transform uppercase tracking-widest">SPEICHERN</button>
                 </div>
             );
         }
 
-        // --- Verlauf ---
         function History({ rentals }) {
             const del = async (id) => {
-                if(confirm("Löschen?")) {
-                    const db = firebase.firestore();
+                if(confirm("Diesen Eintrag wirklich löschen?")) {
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
-                    await db.collection('artifacts').doc(appId).collection('public').doc('data').collection('rentals').doc(id).delete();
+                    await firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data').collection('rentals').doc(id).delete();
                 }
             };
             return (
                 <div className="space-y-4">
-                    <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest px-2">Einsatz-Verlauf</h2>
-                    {rentals.map(r => (
+                    <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest px-2">Verlauf</h2>
+                    {rentals.length === 0 ? <p className="text-center text-slate-300 py-8 font-bold">KEINE EINTRÄGE</p> : rentals.map(r => (
                         <div key={r.id} className={`bg-white p-5 rounded-[2rem] shadow-sm border-l-8 ${r.endReading ? 'border-emerald-500' : 'border-amber-500 animate-pulse'}`}>
                             <div className="flex justify-between items-center">
-                                <div className="truncate pr-4"><div className="font-black uppercase italic truncate">{r.customer}</div><div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{r.machine}</div></div>
+                                <div className="truncate pr-4 leading-none"><div className="font-black uppercase italic truncate">{r.customer}</div><div className="text-[10px] font-bold text-slate-400 uppercase">{r.machine}</div></div>
                                 <div className="text-right shrink-0">
-                                    <div className="font-black text-amber-500">{r.endReading ? (r.endReading-r.startReading).toFixed(1)+'h' : 'LÄUFT'}</div>
-                                    <button onClick={()=>del(r.id)} className="text-rose-300 mt-1"><IconTrash /></button>
+                                    <div className="font-black text-amber-500 text-lg">{r.endReading ? (r.endReading-r.startReading).toFixed(1)+'h' : 'LÄUFT'}</div>
+                                    <button onClick={()=>del(r.id)} className="text-rose-300 text-[10px] font-bold uppercase mt-1">Löschen</button>
                                 </div>
                             </div>
                         </div>
@@ -261,41 +317,34 @@
             );
         }
 
-        // --- Listen (Kunden / Geräte) ---
         function ListView({ title, items, coll, showBase }) {
             const [val, setVal] = useState('');
             const [base, setBase] = useState('');
             const add = async () => {
                 if(!val) return;
-                const db = firebase.firestore();
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
+                const root = firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data');
                 const data = { name: val }; if(showBase) data.base = Number(base)||0;
-                await db.collection('artifacts').doc(appId).collection('public').doc('data').collection(coll).add(data);
+                await root.collection(coll).add(data);
                 setVal(''); setBase('');
             };
             const del = async (id) => {
                 if(confirm("Löschen?")) {
-                    const db = firebase.firestore();
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
-                    await db.collection('artifacts').doc(appId).collection('public').doc('data').collection(coll).doc(id).delete();
+                    await firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data').collection(coll).doc(id).delete();
                 }
             };
             return (
                 <div className="space-y-4">
                     <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest px-2">{title}</h2>
                     <div className="bg-white p-6 rounded-[2.5rem] shadow-sm">
-                        <div className="flex gap-2 mb-4">
-                            <input className="flex-1 bg-slate-50 p-3 rounded-xl font-bold text-sm outline-none" value={val} onChange={e=>setVal(e.target.value)} placeholder="Neu..." />
-                            {showBase && <input className="w-16 bg-slate-50 p-3 rounded-xl font-bold text-sm text-center outline-none" value={base} onChange={e=>setBase(e.target.value)} placeholder="h" />}
-                            <button onClick={add} className="bg-slate-950 text-amber-500 p-3 rounded-xl font-bold">+</button>
-                        </div>
-                        <div className="space-y-2 max-h-[50vh] overflow-y-auto">{items.map(i => (<div key={i.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl text-sm font-bold"><span>{i.name} {showBase && <span className="text-[10px] text-slate-400">({i.base}h)</span>}</span><button onClick={()=>del(i.id)} className="text-rose-400"><IconTrash /></button></div>))}</div>
+                        <div className="flex gap-2 mb-4"><input className="flex-1 bg-slate-50 p-3 rounded-xl font-bold text-sm outline-none" value={val} onChange={e=>setVal(e.target.value)} placeholder="Neu..." />{showBase && <input className="w-16 bg-slate-50 p-3 rounded-xl font-bold text-sm text-center outline-none" value={base} onChange={e=>setBase(e.target.value)} placeholder="h" />}<button onClick={add} className="bg-slate-950 text-amber-500 p-3 rounded-xl font-bold">+</button></div>
+                        <div className="space-y-2 max-h-[50vh] overflow-y-auto">{items.map(i => (<div key={i.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl text-sm font-bold"><span>{i.name} {showBase && <span className="text-[10px] text-slate-400">({i.base}h)</span>}</span><button onClick={()=>del(i.id)} className="text-rose-400 font-black px-2">X</button></div>))}</div>
                     </div>
                 </div>
             );
         }
 
-        // --- Nav Button ---
         function NavBtn({ icon, label, onClick, active, primary }) {
             return (
                 <button onClick={onClick} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${active ? 'text-amber-500' : 'text-slate-500'} ${primary ? 'bg-amber-500 !text-slate-950 h-full border-x border-slate-800' : ''}`}>
