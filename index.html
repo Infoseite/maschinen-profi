@@ -1,278 +1,458 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Maschinenprofi STMK</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='25' fill='%230f172a'/%3E%3Cpath d='M20 70 L80 70 L75 40 L25 40 Z' fill='%23f59e0b'/%3E%3Crect x='45' y='25' width='10' height='15' fill='%23f59e0b'/%3E%3C/svg%3E">
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='25' fill='%230f172a'/%3E%3Cpath d='M20 70 L80 70 L75 40 L25 40 Z' fill='%23f59e0b'/%3E%3Crect x='45' y='25' width='10' height='15' fill='%23f59e0b'/%3E%3C/svg%3E">
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInWithCustomToken, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  query 
+} from 'firebase/firestore';
+import { 
+  BarChart3, 
+  PlusCircle, 
+  History as HistoryIcon, 
+  Users, 
+  Settings, 
+  CheckCircle2, 
+  Trash2,
+  Construction
+} from 'lucide-react';
+
+// --- Firebase Konfiguration & Initialisierung ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'maschinenprofi-stmk';
+
+// Hilfsfunktion für die Pfade (gemäß Sicherheitsregeln)
+const getCollectionPath = (name) => collection(db, 'artifacts', appId, 'public', 'data', name);
+const getDocRef = (collName, id) => doc(db, 'artifacts', appId, 'public', 'data', collName, id);
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [view, setView] = useState('dashboard');
+  const [rentals, setRentals] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [machines, setMachines] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // 1. Authentifizierung
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth Error:", err);
+        setError("Verbindung zur Cloud fehlgeschlagen.");
+      }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  // 2. Echtzeit-Datenabgleich
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubRentals = onSnapshot(getCollectionPath('rentals'), 
+      (snap) => {
+        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setRentals(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
+        setLoading(false);
+      },
+      (err) => setError("Fehler beim Laden der Einsätze.")
+    );
+
+    const unsubMachines = onSnapshot(getCollectionPath('machines'), 
+      (snap) => {
+        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setMachines(data.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    );
+
+    const unsubCustomers = onSnapshot(getCollectionPath('customers'), 
+      (snap) => {
+        const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setCustomers(data.sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    );
+
+    return () => { unsubRentals(); unsubMachines(); unsubCustomers(); };
+  }, [user]);
+
+  // Statistiken berechnen
+  const stats = useMemo(() => {
+    const active = rentals.filter(r => !r.endReading).length;
+    const billedFällig = rentals.filter(r => r.endReading && !r.billed);
+    const openHours = billedFällig.reduce((sum, r) => sum + (Number(r.endReading) - Number(r.startReading)), 0);
+    return { active, openHours, billedFälligCount: billedFällig.length };
+  }, [rentals]);
+
+  if (loading && !error) {
+    return (
+      <div className="flex flex-col h-screen items-center justify-center bg-slate-900 text-amber-500">
+        <div className="animate-spin mb-4"><Construction size={48} /></div>
+        <p className="font-black italic tracking-widest uppercase">Lade Maschinenprofi...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 pb-24 text-slate-900">
+      {/* Header */}
+      <header className="bg-slate-900 text-white p-5 shadow-xl sticky top-0 z-50">
+        <div className="max-w-md mx-auto flex justify-between items-center">
+          <div>
+            <h1 className="text-xl font-black italic text-amber-500 tracking-tighter">MASCHINENPROFI STMK</h1>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cloud-Management</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${error ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`}></div>
+            <span className="text-[9px] font-bold uppercase text-slate-400">{error ? 'Offline' : 'Live'}</span>
+          </div>
+        </div>
+      </header>
+
+      {error && (
+        <div className="max-w-md mx-auto p-4">
+          <div className="bg-rose-100 border-2 border-rose-500 text-rose-700 p-4 rounded-2xl text-center font-bold">
+            {error}
+          </div>
+        </div>
+      )}
+
+      {/* Content */}
+      <main className="max-w-md mx-auto p-4 space-y-6">
+        {view === 'dashboard' && <Dashboard stats={stats} rentals={rentals} />}
+        {view === 'new' && (
+          <EntryForm 
+            machines={machines} 
+            customers={customers} 
+            rentals={rentals} 
+            onClose={() => setView('dashboard')} 
+          />
+        )}
+        {view === 'history' && <History rentals={rentals} />}
+        {view === 'settings' && <SettingsView machines={machines} customers={customers} />}
+      </main>
+
+      {/* Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 text-white h-20 flex border-t border-slate-800 px-2 shadow-2xl z-50">
+        <NavButton active={view === 'dashboard'} icon={<BarChart3 size={20} />} label="Stats" onClick={() => setView('dashboard')} />
+        <NavButton active={view === 'new'} icon={<PlusCircle size={24} />} label="NEU" onClick={() => setView('new')} primary />
+        <NavButton active={view === 'history'} icon={<HistoryIcon size={20} />} label="Verlauf" onClick={() => setView('history')} />
+        <NavButton active={view === 'settings'} icon={<Settings size={20} />} label="Setup" onClick={() => setView('settings')} />
+      </nav>
+    </div>
+  );
+}
+
+// --- Komponenten ---
+
+function Dashboard({ stats, rentals }) {
+  const markAsBilled = async (id) => {
+    await updateDoc(getDocRef('rentals', id), { billed: true });
+  };
+
+  const fälligeEinsätze = rentals.filter(r => r.endReading && !r.billed);
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="grid grid-cols-2 gap-4">
+        <StatCard label="Aktive Einsätze" value={stats.active} color="text-amber-500" />
+        <StatCard label="Offen (h)" value={stats.openHours.toFixed(1)} color="text-emerald-500" />
+      </div>
+
+      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+        <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest mb-4">Abrechnung fällig</h2>
+        <div className="space-y-3">
+          {fälligeEinsätze.length === 0 ? (
+            <p className="text-slate-300 text-center py-8 font-bold text-sm uppercase tracking-wide">Alles erledigt!</p>
+          ) : (
+            fälligeEinsätze.map(r => (
+              <div key={r.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="overflow-hidden">
+                  <span className="font-bold block leading-none mb-1 truncate">{r.customer}</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase">{r.machine}</span>
+                </div>
+                <div className="flex items-center gap-3 ml-2 shrink-0">
+                  <span className="font-black text-amber-500 tabular-nums">{(r.endReading - r.startReading).toFixed(1)}h</span>
+                  <button 
+                    onClick={() => markAsBilled(r.id)}
+                    className="bg-emerald-500 text-white p-2 rounded-xl shadow-lg active:scale-90 transition-transform"
+                  >
+                    <CheckCircle2 size={20} />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EntryForm({ machines, customers, rentals, onClose }) {
+  const [form, setForm] = useState({
+    customer: '', 
+    newCustomer: '', 
+    machine: '',
+    startReading: '', 
+    endReading: '', 
+    date: new Date().toISOString().split('T')[0], 
+    notes: ''
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Automatischer Zählerstand-Vorschlag
+  useEffect(() => {
+    if (form.machine) {
+      const machineRentals = rentals
+        .filter(r => r.machine === form.machine && r.endReading)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      
+      if (machineRentals.length > 0) {
+        setForm(f => ({ ...f, startReading: machineRentals[0].endReading }));
+      } else {
+        const m = machines.find(m => m.name === form.machine);
+        if (m) setForm(f => ({ ...f, startReading: m.base || 0 }));
+      }
+    }
+  }, [form.machine, machines, rentals]);
+
+  const save = async () => {
+    const finalCust = form.newCustomer.trim() || form.customer;
+    if (!finalCust || !form.machine || form.startReading === '') {
+      return alert("Pflichtfelder: Kunde, Gerät und Startstand!");
+    }
     
-    <!-- Firebase Bibliotheken (WICHTIG: Compat-Version für einfache Nutzung) -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    setIsSaving(true);
+    try {
+      await addDoc(getCollectionPath('rentals'), {
+        customer: finalCust,
+        machine: form.machine,
+        startReading: Number(form.startReading),
+        endReading: form.endReading ? Number(form.endReading) : null,
+        date: form.date,
+        notes: form.notes,
+        billed: false
+      });
 
-    <!-- React & Babel -->
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
-<body class="bg-slate-50 font-sans antialiased text-slate-900 overflow-x-hidden">
-    <div id="root"></div>
+      // Neuen Kunden speichern, falls er noch nicht existiert
+      if (form.newCustomer.trim() && !customers.some(c => c.name === finalCust)) {
+        await addDoc(getCollectionPath('customers'), { name: finalCust.trim() });
+      }
+      onClose();
+    } catch (err) {
+      alert("Fehler beim Speichern!");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
-    <script type="text/babel">
-        // ============================================================
-        // !!! EGON: HIER DEINE ECHTEN DATEN VON GOOGLE EINSETZEN !!!
-        // ============================================================
-        const firebaseConfig = {
-            apiKey: "HIER_DEIN_API_KEY",           
-            authDomain: "DEIN_PROJEKT.firebaseapp.com",
-            projectId: "DEIN_PROJEKT_ID",          
-            storageBucket: "DEIN_PROJEKT.appspot.com",
-            messagingSenderId: "DEINE_ID",
-            appId: "DEINE_APP_ID"
-        };
-        // ============================================================
+  return (
+    <div className="bg-white p-6 rounded-[3rem] shadow-xl space-y-6 animate-in zoom-in-95 duration-300">
+      <h2 className="text-2xl font-black italic uppercase tracking-tighter border-b-4 border-amber-500 inline-block pb-1 leading-none">Neuaufnahme</h2>
+      
+      <div className="space-y-4">
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Kunde</label>
+          <select 
+            className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-1" 
+            value={form.customer} 
+            onChange={e => setForm({...form, customer: e.target.value, newCustomer: ''})}
+          >
+            <option value="">Wählen...</option>
+            {customers.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+          </select>
+          <input 
+            className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-2" 
+            placeholder="Oder neuer Name..." 
+            value={form.newCustomer} 
+            onChange={e => setForm({...form, newCustomer: e.target.value, customer: ''})} 
+          />
+        </div>
 
-        // HIER IST DER ZÜNDSCHLÜSSEL - Fest eingebaut!
-        // (Entspricht dem 'const app = initializeApp' von Google)
-        firebase.initializeApp(firebaseConfig);
-        
-        const db = firebase.firestore();
-        const auth = firebase.auth();
+        <div>
+          <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Maschine</label>
+          <select 
+            className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold mt-1" 
+            value={form.machine} 
+            onChange={e => setForm({...form, machine: e.target.value})}
+          >
+            <option value="">Wählen...</option>
+            {machines.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+          </select>
+        </div>
+      </div>
 
-        const { useState, useEffect, useMemo } = React;
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <label className="text-[10px] font-black uppercase text-slate-400 block text-center">Start (h)</label>
+          <input 
+            type="number" 
+            className="w-full bg-slate-100 p-4 rounded-2xl font-black text-xl text-amber-600 outline-none text-center" 
+            value={form.startReading} 
+            onChange={e => setForm({...form, startReading: e.target.value})} 
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-black uppercase text-slate-400 block text-center">Ende (h)</label>
+          <input 
+            type="number" 
+            className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-black text-xl outline-none text-center" 
+            value={form.endReading} 
+            onChange={e => setForm({...form, endReading: e.target.value})} 
+            placeholder="-" 
+          />
+        </div>
+      </div>
 
-        function App() {
-            const [view, setView] = useState('dashboard');
-            const [rentals, setRentals] = useState([]);
-            const [customers, setCustomers] = useState([]);
-            const [machines, setMachines] = useState([]);
-            const [baseHours, setBaseHours] = useState({});
-            const [loading, setLoading] = useState(true);
-            const [connectionError, setConnectionError] = useState(null);
+      <button 
+        onClick={save} 
+        disabled={isSaving}
+        className="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-lg italic shadow-2xl active:scale-95 transition-all uppercase tracking-widest disabled:opacity-50"
+      >
+        {isSaving ? 'Speichert...' : 'Einsatz Speichern'}
+      </button>
+    </div>
+  );
+}
 
-            useEffect(() => {
-                // Prüfen ob die Keys noch die Platzhalter sind
-                if (firebaseConfig.apiKey === "HIER_DEIN_API_KEY") {
-                    setConnectionError("Bitte trage zuerst deine Firebase-Daten im Code ein!");
-                    setLoading(false);
-                    return;
-                }
+function History({ rentals }) {
+  const deleteRental = async (id) => {
+    // Da wir kein Browser-Confirm nutzen dürfen, ist das hier "final" oder könnte mit UI-State gelöst werden
+    await deleteDoc(getDocRef('rentals', id));
+  };
 
-                auth.signInAnonymously().catch(err => {
-                    console.error("Auth Fehler", err);
-                    setConnectionError("Cloud-Verbindung fehlgeschlagen. Stimmen die Keys?");
-                });
-                
-                const unsubRentals = db.collection('rentals').onSnapshot(snap => {
-                    const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setRentals(data.sort((a, b) => new Date(b.date) - new Date(a.date)));
-                    setLoading(false);
-                    setConnectionError(null);
-                }, (err) => {
-                    console.error("Firestore Fehler", err);
-                    setConnectionError("Datenbank-Fehler. Testmodus in Firebase aktiv?");
-                    setLoading(false);
-                });
+  return (
+    <div className="space-y-4 animate-in slide-in-from-bottom-4 duration-300">
+      <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest px-2">Alle Einsätze</h2>
+      {rentals.map(r => (
+        <div 
+          key={r.id} 
+          className={`bg-white p-5 rounded-3xl shadow-sm flex justify-between items-center border-l-8 ${r.endReading ? 'border-emerald-500' : 'border-amber-500 animate-pulse'}`}
+        >
+          <div className="overflow-hidden mr-2">
+            <span className="font-black uppercase italic block text-lg leading-tight truncate">{r.customer}</span>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              {r.machine} • {new Date(r.date).toLocaleDateString('de-AT')}
+            </span>
+            <div className="text-[10px] text-slate-300 mt-1 font-bold">
+              {r.startReading} → {r.endReading || 'läuft...'}
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="font-black text-xl text-amber-500 tabular-nums leading-none mb-2">
+              {r.endReading ? (r.endReading - r.startReading).toFixed(1) + ' h' : 'OFFEN'}
+            </div>
+            <button 
+              onClick={() => deleteRental(r.id)} 
+              className="bg-rose-50 text-rose-500 p-2 rounded-xl active:bg-rose-500 active:text-white transition-colors"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-                const unsubMachines = db.collection('machines').onSnapshot(snap => {
-                    const data = snap.docs.map(doc => doc.data().name);
-                    setMachines(data.sort());
-                    const hours = {};
-                    snap.docs.forEach(doc => hours[doc.data().name] = doc.data().base || 0);
-                    setBaseHours(hours);
-                });
+function SettingsView({ machines, customers }) {
+  const [newMachine, setNewMachine] = useState({ name: '', base: '' });
 
-                const unsubCustomers = db.collection('customers').onSnapshot(snap => {
-                    const data = snap.docs.map(doc => doc.data().name);
-                    setCustomers(data.sort());
-                });
+  const addMachine = async () => {
+    if (!newMachine.name) return;
+    await addDoc(getCollectionPath('machines'), { 
+      name: newMachine.name, 
+      base: Number(newMachine.base) || 0 
+    });
+    setNewMachine({ name: '', base: '' });
+  };
 
-                return () => { unsubRentals(); unsubMachines(); unsubCustomers(); };
-            }, []);
+  const deleteItem = async (coll, id) => {
+    await deleteDoc(getDocRef(coll, id));
+  };
 
-            const stats = useMemo(() => {
-                const openRentals = rentals.filter(r => !r.billed && r.endReading);
-                const openHours = openRentals.reduce((sum, r) => sum + (parseFloat(r.endReading) - parseFloat(r.startReading)), 0);
-                const active = rentals.filter(r => !r.endReading).length;
-                return { openHours, active };
-            }, [rentals]);
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+        <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest mb-4">Geräte verwalten</h2>
+        <div className="flex gap-2 mb-4">
+          <input 
+            className="flex-1 bg-slate-50 p-3 rounded-xl border border-slate-100 font-bold text-sm" 
+            placeholder="Name (z.B. Bagger 3t)" 
+            value={newMachine.name}
+            onChange={e => setNewMachine({...newMachine, name: e.target.value})}
+          />
+          <input 
+            type="number"
+            className="w-20 bg-slate-50 p-3 rounded-xl border border-slate-100 font-bold text-sm" 
+            placeholder="Zähler" 
+            value={newMachine.base}
+            onChange={e => setNewMachine({...newMachine, base: e.target.value})}
+          />
+          <button onClick={addMachine} className="bg-slate-900 text-amber-500 p-3 rounded-xl font-bold">+</button>
+        </div>
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {machines.map(m => (
+            <div key={m.id} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl text-sm font-bold">
+              <span>{m.name} <span className="text-slate-400 text-[10px]">({m.base}h)</span></span>
+              <button onClick={() => deleteItem('machines', m.id)} className="text-rose-400 p-1"><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
 
-            if (loading) return (
-                <div className="flex h-screen items-center justify-center bg-slate-900 text-amber-500 font-black italic p-8 text-center uppercase tracking-widest">
-                    Verbinde mit Cloud...
-                </div>
-            );
+      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+        <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest mb-4">Kundenliste</h2>
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {customers.map(c => (
+            <div key={c.id} className="flex justify-between items-center p-2 bg-slate-50 rounded-xl text-sm font-bold">
+              <span>{c.name}</span>
+              <button onClick={() => deleteItem('customers', c.id)} className="text-rose-400 p-1"><Trash2 size={14} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-            return (
-                <div className="min-h-screen pb-24">
-                    <header className="bg-slate-900 text-white p-6 shadow-2xl sticky top-0 z-50">
-                        <div className="max-w-4xl mx-auto flex justify-between items-center">
-                            <div>
-                                <h1 className="text-2xl font-black italic text-amber-500 tracking-tighter leading-none">MASCHINENPROFI</h1>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Cloud-System</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${connectionError ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'}`}></div>
-                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-widest">{connectionError ? 'Offline' : 'Live'}</span>
-                            </div>
-                        </div>
-                    </header>
+function StatCard({ label, value, color }) {
+  return (
+    <div className="bg-white p-6 rounded-3xl shadow-sm border-2 border-white">
+      <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">{label}</span>
+      <div className={`text-3xl font-black ${color} tabular-nums`}>{value}</div>
+    </div>
+  );
+}
 
-                    {connectionError && (
-                        <div className="max-w-4xl mx-auto p-4 animate-bounce">
-                            <div className="bg-rose-600 text-white p-6 rounded-[2rem] shadow-xl text-center">
-                                <div className="font-black uppercase tracking-widest text-xs">{connectionError}</div>
-                            </div>
-                        </div>
-                    )}
-
-                    <main className="max-w-4xl mx-auto p-4 space-y-6">
-                        {!connectionError && view === 'dashboard' && <Dashboard stats={stats} rentals={rentals} db={db} />}
-                        {!connectionError && view === 'new' && <EntryForm machines={machines} customers={customers} baseHours={baseHours} rentals={rentals} setView={setView} db={db} />}
-                        {!connectionError && view === 'history' && <History rentals={rentals} db={db} />}
-                    </main>
-
-                    <nav className="fixed bottom-0 left-0 right-0 bg-slate-900 text-white h-20 flex border-t border-slate-800 px-2 shadow-inner z-50">
-                        <NavButton active={view === 'new'} icon="➕" label="NEU" onClick={() => setView('new')} primary />
-                        <NavButton active={view === 'dashboard'} icon="📊" label="ST" onClick={() => setView('dashboard')} />
-                        <NavButton active={view === 'history'} icon="📜" label="V" onClick={() => setView('history')} />
-                        <NavButton active={false} icon="👥" label="K" onClick={() => alert('Kunden werden automatisch gespeichert')} />
-                        <NavButton active={false} icon="🚜" label="G" onClick={() => alert('Geräte direkt in Firebase verwalten')} />
-                    </nav>
-                </div>
-            );
-        }
-
-        function Dashboard({ stats, rentals, db }) {
-            return (
-                <div className="space-y-6 animate-in fade-in duration-500">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border-2 border-white">
-                            <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">Einsätze</span>
-                            <div className="text-3xl font-black text-amber-500 tabular-nums">{stats.active}</div>
-                        </div>
-                        <div className="bg-white p-6 rounded-3xl shadow-sm border-2 border-white">
-                            <span className="text-[10px] font-black text-slate-400 uppercase block mb-1">Offen (h)</span>
-                            <div className="text-3xl font-black text-emerald-500 tabular-nums">{stats.openHours.toFixed(1)}</div>
-                        </div>
-                    </div>
-                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm">
-                        <h2 className="font-black italic uppercase text-slate-400 text-[10px] tracking-widest mb-4">Abrechnung fällig</h2>
-                        <div className="space-y-3">
-                            {rentals.filter(r => !r.billed && r.endReading).length === 0 ? (
-                                <p className="text-slate-200 text-center py-8 font-black uppercase text-[10px] tracking-widest">Keine offenen Posten.</p>
-                            ) : (
-                                rentals.filter(r => !r.billed && r.endReading).map(r => (
-                                    <div key={r.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                        <div>
-                                            <span className="font-bold block leading-none mb-1">{r.customer}</span>
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase">{r.machine}</span>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <span className="font-black text-amber-500">{(r.endReading - r.startReading).toFixed(1)} h</span>
-                                            <button onClick={() => db.collection('rentals').doc(r.id).update({ billed: true })} className="bg-emerald-500 text-white w-10 h-10 rounded-xl flex items-center justify-center font-bold">✓</button>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function EntryForm({ machines, customers, baseHours, rentals, setView, db }) {
-            const [form, setForm] = useState({
-                customer: '', newCustomer: '', machine: '',
-                startReading: '', endReading: '', date: new Date().toISOString().split('T')[0], notes: ''
-            });
-
-            useEffect(() => {
-                if (form.machine) {
-                    const machineRentals = rentals.filter(r => r.machine === form.machine && r.endReading).sort((a,b) => new Date(b.date) - new Date(a.date));
-                    const lastValue = machineRentals.length > 0 ? machineRentals[0].endReading : (baseHours[form.machine] || 0);
-                    setForm(f => ({ ...f, startReading: lastValue }));
-                }
-            }, [form.machine, baseHours]);
-
-            const save = async () => {
-                const finalCust = form.newCustomer.trim() || form.customer;
-                if (!finalCust || !form.machine || !form.startReading) return alert("Pflichtfelder fehlen!");
-                await db.collection('rentals').add({
-                    customer: finalCust, machine: form.machine, 
-                    startReading: parseFloat(form.startReading),
-                    endReading: form.endReading ? parseFloat(form.endReading) : null,
-                    date: form.date, notes: form.notes, billed: false
-                });
-                if (form.newCustomer.trim() && !customers.includes(finalCust)) {
-                    await db.collection('customers').add({ name: finalCust.trim() });
-                }
-                setView('dashboard');
-            };
-
-            return (
-                <div className="bg-white p-8 rounded-[3rem] shadow-xl space-y-6 animate-in zoom-in-95 duration-300">
-                    <h2 className="text-2xl font-black italic uppercase tracking-tighter border-b-4 border-amber-500 inline-block pb-1 leading-none">Neuaufnahme</h2>
-                    <div className="space-y-4">
-                        <select className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold" value={form.customer} onChange={e => setForm({...form, customer: e.target.value, newCustomer: ''})}>
-                            <option value="">Kunde wählen...</option>
-                            {customers.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <input className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold" placeholder="Oder neuer Name..." value={form.newCustomer} onChange={e => setForm({...form, newCustomer: e.target.value, customer: ''})} />
-                        <select className="w-full bg-slate-50 border-2 border-slate-100 p-4 rounded-2xl font-bold" value={form.machine} onChange={e => setForm({...form, machine: e.target.value})}>
-                            <option value="">Gerät wählen...</option>
-                            {machines.map(m => <option key={m} value={m}>{m}</option>)}
-                        </select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2 text-center">
-                            <label className="text-[10px] font-black uppercase text-slate-400">Start</label>
-                            <input type="number" className="w-full bg-slate-100 p-5 rounded-2xl font-black text-2xl text-amber-600 outline-none" value={form.startReading} onChange={e => setForm({...form, startReading: e.target.value})} />
-                        </div>
-                        <div className="space-y-2 text-center">
-                            <label className="text-[10px] font-black uppercase text-slate-400">Ende</label>
-                            <input type="number" className="w-full bg-slate-50 border-2 border-slate-100 p-5 rounded-2xl font-black text-2xl outline-none" value={form.endReading} onChange={e => setForm({...form, endReading: e.target.value})} placeholder="..." />
-                        </div>
-                    </div>
-                    <button onClick={save} className="w-full bg-slate-900 text-white py-6 rounded-3xl font-black text-xl italic shadow-2xl active:scale-95 transition-all uppercase tracking-widest">Speichern</button>
-                </div>
-            );
-        }
-
-        function History({ rentals, db }) {
-            return (
-                <div className="space-y-4 animate-in slide-in-from-bottom-4">
-                    {rentals.map(r => (
-                        <div key={r.id} className={`bg-white p-6 rounded-3xl shadow-sm flex justify-between items-center border-l-8 ${r.endReading ? 'border-emerald-500' : 'border-amber-500 animate-pulse'}`}>
-                            <div>
-                                <span className="font-black uppercase italic block text-lg leading-tight mb-1">{r.customer}</span>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{r.machine} • {new Date(r.date).toLocaleDateString('de-AT')}</span>
-                                <div className="text-[10px] text-slate-300 mt-1 font-bold leading-none">{r.startReading} → {r.endReading || 'läuft...'}</div>
-                            </div>
-                            <div className="text-right">
-                                <div className="font-black text-2xl text-amber-500 tabular-nums leading-none">{r.endReading ? (r.endReading - r.startReading).toFixed(1) + ' h' : 'OFFEN'}</div>
-                                <button onClick={() => {if(confirm("Eintrag löschen?")) db.collection('rentals').doc(r.id).delete()}} className="text-rose-300 text-[9px] font-black uppercase mt-1 tracking-widest">Löschen</button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            );
-        }
-
-        function NavButton({ icon, label, onClick, active, primary }) {
-            return (
-                <button onClick={onClick} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${active ? 'text-amber-500' : 'text-slate-500'} ${primary ? 'bg-amber-500 !text-slate-900 !rounded-t-3xl -mt-4 shadow-2xl h-24' : ''}`}>
-                    <span className={primary ? 'text-2xl' : 'text-xl'}>{icon}</span>
-                    <span className="text-[10px] font-black uppercase tracking-tighter leading-none">{label}</span>
-                </button>
-            );
-        }
-
-        const root = ReactDOM.createRoot(document.getElementById("root"));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+function NavButton({ icon, label, onClick, active, primary }) {
+  return (
+    <button 
+      onClick={onClick} 
+      className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${active ? 'text-amber-500' : 'text-slate-500'} ${primary ? 'bg-amber-500 !text-slate-900 !rounded-t-3xl -mt-4 shadow-2xl h-24' : ''}`}
+    >
+      <span className={primary ? 'scale-125' : ''}>{icon}</span>
+      <span className="text-[10px] font-black uppercase tracking-tighter leading-none">{label}</span>
+    </button>
+  );
+}
